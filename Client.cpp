@@ -1,38 +1,48 @@
 #include "MMW.h"
 #include <SFML/Graphics.hpp>
-#include <unordered_map>
-#include <mutex>
+#include <map>
 #include <string>
-#include <nlohmann/json.hpp>
+#include <sstream>
 
 struct Player {
-    float x = 100, y = 100;
+    sf::RectangleShape box;
 };
 
-std::unordered_map<std::string, Player> players;
-std::mutex playersMutex;
-std::string myId = "player1"; // each client should have a unique id
+std::map<int, Player> players;
 
-void onStateUpdate(const char* msg) {
-    try {
-        auto j = nlohmann::json::parse(msg);
-        std::lock_guard<std::mutex> lock(playersMutex);
-        for (auto& [id, p] : j["players"].items()) {
-            players[id].x = p["x"];
-            players[id].y = p["y"];
+void handleServerUpdate(const char* msg) {
+    // msg format: "id:x,y;id:x,y;..."
+    std::istringstream ss(msg);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        if (token.empty()) continue;
+        int id;
+        float x, y;
+        char colon, comma;
+        std::istringstream pairStream(token);
+        pairStream >> id >> colon >> x >> comma >> y;
+        if (players.find(id) == players.end()) {
+            players[id].box.setSize(sf::Vector2f(50,50));
+            players[id].box.setFillColor(id == 1 ? sf::Color::Red : sf::Color::Blue);
         }
-    } catch (...) {}
+        players[id].box.setPosition(x, y);
+    }
 }
 
 int main() {
+    const int myId = 1;
+    float x = 100, y = 100;
+
     mmw_set_log_level(MMW_LOG_LEVEL_INFO);
     mmw_initialize("127.0.0.1", 5000);
+    mmw_create_subscriber("positions", handleServerUpdate);
 
-    // Subscribe to game state
-    mmw_create_subscriber("game/state", onStateUpdate);
+    sf::RenderWindow window(sf::VideoMode(800, 600), "MMW Demo Client");
 
-    sf::RenderWindow window(sf::VideoMode(800, 600), "MMW Multiplayer Demo");
+    players[myId].box.setSize(sf::Vector2f(50,50));
+    players[myId].box.setFillColor(sf::Color::Red);
 
+    sf::Clock clock;
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
@@ -40,32 +50,27 @@ int main() {
                 window.close();
         }
 
-        // Movement input
-        float dx = 0, dy = 0;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) dy -= 5;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) dy += 5;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) dx -= 5;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) dx += 5;
+        float speed = 200.0f; // pixels per second
+        float dt = clock.restart().asSeconds();
 
-        if (dx != 0 || dy != 0) {
-            nlohmann::json moveMsg = { {"id", myId}, {"dx", dx}, {"dy", dy} };
-            mmw_publish("game/move", moveMsg.dump().c_str(), MMW_RELIABLE);
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  x -= speed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) x += speed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    y -= speed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  y += speed * dt;
+
+        // Update my player locally
+        players[myId].box.setPosition(x, y);
+
+        // Send update to server
+        std::ostringstream out;
+        out << myId << ":" << x << "," << y;
+        mmw_publish("player_input", out.str().c_str(), MMW_RELIABLE);
+
+        window.clear();
+        for (auto& pair : players) {
+            window.draw(pair.second.box);
         }
-
-        window.clear(sf::Color::Black);
-
-        {
-            std::lock_guard<std::mutex> lock(playersMutex);
-            for (auto& [id, p] : players) {
-                sf::RectangleShape rect(sf::Vector2f(50, 50));
-                rect.setPosition(p.x, p.y);
-                rect.setFillColor(id == myId ? sf::Color::Green : sf::Color::Red);
-                window.draw(rect);
-            }
-        }
-
         window.display();
-        sf::sleep(sf::milliseconds(50));
     }
 
     mmw_cleanup();
