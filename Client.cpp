@@ -107,9 +107,12 @@ int main(int argc, char** argv) {
         // Send own updated position to server ~60Hz
         if (sendClock.getElapsedTime().asMilliseconds() > 16) {
             if (sizeof(PlayerState) > 0) {
-                mmw_publish_raw("input", &me, sizeof(PlayerState), MMW_RELIABLE);
+                // Send own updated position to server only if moved
+                if ((dx != 0.f || dy != 0.f) && sendClock.getElapsedTime().asMilliseconds() > 16) {
+                    mmw_publish_raw("input", &me, sizeof(PlayerState), MMW_BEST_EFFORT);
+                    sendClock.restart();
+                }
             }
-            sendClock.restart();
         }
 
         // Update interpolation for remote players
