@@ -1,53 +1,45 @@
 #include "MMW.h"
-#include <SFML/System.hpp>
+#include "PlayerState.h"
 #include <map>
-#include <string>
-#include <sstream>
 #include <mutex>
+#include <thread>
+#include <iostream>
 
-struct Player {
-    float x, y;
-};
-
-std::map<int, Player> players;
+std::map<int, PlayerState> players;
 std::mutex playersMutex;
 
-// Callback when a client sends input
-void handlePlayerInput(const char* msg) {
-    // msg format: "id:x:y"
-    std::istringstream ss(msg);
-    int id;
-    char sep1, sep2;
-    float x, y;
-    ss >> id >> sep1 >> x >> sep2 >> y;
-
+void handlePlayerInput(void* rawMsg) {
+    PlayerState* state = static_cast<PlayerState*>(rawMsg);
     std::lock_guard<std::mutex> lock(playersMutex);
-    players[id] = {x, y};
+    players[state->id] = *state;
 }
 
 int main() {
     mmw_set_log_level(MMW_LOG_LEVEL_INFO);
     mmw_initialize("127.0.0.1", 5000);
 
-    mmw_create_subscriber("player_input", handlePlayerInput);
+    mmw_create_subscriber_raw("player_input", handlePlayerInput);
+    mmw_create_publisher("positions");
 
-    // Main server loop
+    std::cout << "Server running..." << std::endl;
+
     while (true) {
-        // Prepare the update message
-        std::ostringstream out;
+        // Broadcast at fixed 60Hz
+        PlayerState allStates[64];
+        int count = 0;
+
         {
             std::lock_guard<std::mutex> lock(playersMutex);
-            for (const auto& pair : players) {
-                out << pair.first << ":" << pair.second.x << "," << pair.second.y << ";";
+            for (auto it = players.begin(); it != players.end(); ++it) {
+                allStates[count++] = it->second;
             }
         }
 
-        std::string updateMsg = out.str();
-        if (!updateMsg.empty()) {
-            mmw_publish("positions", updateMsg.c_str(), MMW_RELIABLE);
+        if (count > 0) {
+            mmw_publish_raw("positions", allStates, count * sizeof(PlayerState), MMW_BEST_EFFORT);
         }
 
-        sf::sleep(sf::milliseconds(100)); // 10 updates per second
+        std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60Hz
     }
 
     mmw_cleanup();

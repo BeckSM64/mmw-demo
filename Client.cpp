@@ -1,76 +1,72 @@
 #include "MMW.h"
+#include "PlayerState.h"
 #include <SFML/Graphics.hpp>
 #include <map>
-#include <string>
-#include <sstream>
+#include <mutex>
 
-struct Player {
-    sf::RectangleShape box;
-};
+std::map<int, sf::RectangleShape> players;
+std::mutex playersMutex;
+int myId = 0;
+PlayerState myState;
 
-std::map<int, Player> players;
+void handleServerUpdate(void* rawMsg) {
+    PlayerState* states = static_cast<PlayerState*>(rawMsg);
+    size_t count = 64; // assume max 64 players for demo
+    std::lock_guard<std::mutex> lock(playersMutex);
 
-void handleServerUpdate(const char* msg) {
-    // msg format: "id:x,y;id:x,y;..."
-    std::istringstream ss(msg);
-    std::string token;
-    while (std::getline(ss, token, ';')) {
-        if (token.empty()) continue;
-        int id;
-        float x, y;
-        char colon, comma;
-        std::istringstream pairStream(token);
-        pairStream >> id >> colon >> x >> comma >> y;
+    for (size_t i = 0; i < count; ++i) {
+        int id = states[i].id;
+        if (id == 0) break; // stop at empty entry
         if (players.find(id) == players.end()) {
-            players[id].box.setSize(sf::Vector2f(50,50));
-            players[id].box.setFillColor(id == 1 ? sf::Color::Red : sf::Color::Blue);
+            sf::RectangleShape box(sf::Vector2f(50,50));
+            box.setFillColor(id == myId ? sf::Color::Red : sf::Color::Blue);
+            players[id] = box;
         }
-        players[id].box.setPosition(x, y);
+        players[id].setPosition(states[i].x, states[i].y);
     }
 }
 
 int main() {
-    const int myId = 1;
-    float x = 100, y = 100;
-
     mmw_set_log_level(MMW_LOG_LEVEL_INFO);
     mmw_initialize("127.0.0.1", 5000);
-    mmw_create_subscriber("positions", handleServerUpdate);
 
-    sf::RenderWindow window(sf::VideoMode(800, 600), "MMW Demo Client");
+    mmw_create_publisher("player_input");
+    mmw_create_subscriber_raw("positions", handleServerUpdate);
 
-    players[myId].box.setSize(sf::Vector2f(50,50));
-    players[myId].box.setFillColor(sf::Color::Red);
+    // Assign a unique ID (just use time for demo)
+    myId = static_cast<int>(time(NULL) % 100000);
+    myState.id = myId;
+    myState.x = 100.0f;
+    myState.y = 100.0f;
 
-    sf::Clock clock;
+    sf::RenderWindow window(sf::VideoMode(800,600), "MMW Demo Client");
+
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
-                window.close();
+            if (event.type == sf::Event::Closed) window.close();
         }
 
-        float speed = 200.0f; // pixels per second
-        float dt = clock.restart().asSeconds();
+        bool moved = false;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  { myState.x -= 5; moved = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { myState.x += 5; moved = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    { myState.y -= 5; moved = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  { myState.y += 5; moved = true; }
 
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  x -= speed * dt;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) x += speed * dt;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    y -= speed * dt;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  y += speed * dt;
-
-        // Update my player locally
-        players[myId].box.setPosition(x, y);
-
-        // Send update to server
-        std::ostringstream out;
-        out << myId << ":" << x << "," << y;
-        mmw_publish("player_input", out.str().c_str(), MMW_RELIABLE);
+        if (moved) {
+            mmw_publish_raw("player_input", &myState, sizeof(PlayerState), MMW_BEST_EFFORT);
+        }
 
         window.clear();
-        for (auto& pair : players) {
-            window.draw(pair.second.box);
+        {
+            std::lock_guard<std::mutex> lock(playersMutex);
+            for (auto& kv : players) {
+                window.draw(kv.second);
+            }
         }
         window.display();
+
+        sf::sleep(sf::milliseconds(16)); // ~60 FPS
     }
 
     mmw_cleanup();
