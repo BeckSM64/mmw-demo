@@ -1,72 +1,97 @@
-#include "MMW.h"
-#include "PlayerState.h"
+// client.cpp
 #include <SFML/Graphics.hpp>
-#include <map>
+#include <iostream>
+#include <thread>
 #include <mutex>
+#include <unordered_map>
+#include <cstring>
+#include "MMW.h"
 
-std::map<int, sf::RectangleShape> players;
-std::mutex playersMutex;
-int myId = 0;
-PlayerState myState;
+struct PlayerState {
+    uint32_t playerId;
+    float x;
+    float y;
+};
 
-void handleServerUpdate(void* rawMsg) {
-    PlayerState* states = static_cast<PlayerState*>(rawMsg);
-    size_t count = 64; // assume max 64 players for demo
-    std::lock_guard<std::mutex> lock(playersMutex);
+struct InputMsg {
+    uint32_t playerId;
+    float dx;
+    float dy;
+};
 
-    for (size_t i = 0; i < count; ++i) {
-        int id = states[i].id;
-        if (id == 0) break; // stop at empty entry
-        if (players.find(id) == players.end()) {
-            sf::RectangleShape box(sf::Vector2f(50,50));
-            box.setFillColor(id == myId ? sf::Color::Red : sf::Color::Blue);
-            players[id] = box;
-        }
-        players[id].setPosition(states[i].x, states[i].y);
-    }
+static std::mutex g_state_mtx;
+static std::unordered_map<uint32_t, PlayerState> g_players;
+static uint32_t g_myId = 1;
+
+// Subscriber callback for authoritative state
+void state_callback(void* data) {
+    PlayerState* s = reinterpret_cast<PlayerState*>(data);
+    std::lock_guard<std::mutex> lk(g_state_mtx);
+    g_players[s->playerId] = *s;
 }
 
-int main() {
-    mmw_set_log_level(MMW_LOG_LEVEL_INFO);
+int main(int argc, char** argv) {
+    // if (argc >= 2) g_myId = atoi(argv[1]);
+    g_myId = atoi(argv[1]);
+    std::cout << "My ID: " << g_myId << std::endl;
+
+    mmw_set_log_level(MMW_LOG_LEVEL_OFF);
     mmw_initialize("127.0.0.1", 5000);
+    mmw_create_publisher("input");
+    mmw_create_subscriber_raw("state", state_callback);
 
-    mmw_create_publisher("player_input");
-    mmw_create_subscriber_raw("positions", handleServerUpdate);
+    sf::RenderWindow window(sf::VideoMode(600,400), "MMW Client");
+    window.setFramerateLimit(60);
 
-    // Assign a unique ID (just use time for demo)
-    myId = static_cast<int>(time(NULL) % 100000);
-    myState.id = myId;
-    myState.x = 100.0f;
-    myState.y = 100.0f;
+    float px = 100, py = 100;
+    sf::RectangleShape me(sf::Vector2f(32,32));
+    me.setFillColor(sf::Color::Green);
 
-    sf::RenderWindow window(sf::VideoMode(800,600), "MMW Demo Client");
-
+    sf::Clock sendClock;
     while (window.isOpen()) {
-        sf::Event event;
-        while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed) window.close();
+        sf::Event e;
+        while (window.pollEvent(e)) {
+            if (e.type == sf::Event::Closed) window.close();
         }
 
-        bool moved = false;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  { myState.x -= 5; moved = true; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { myState.x += 5; moved = true; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    { myState.y -= 5; moved = true; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  { myState.y += 5; moved = true; }
+        float dx=0, dy=0;
+        if (window.hasFocus()) {
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) dx-=2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) dx+=2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) dy-=2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) dy+=2;
+        }
 
-        if (moved) {
-            mmw_publish_raw("player_input", &myState, sizeof(PlayerState), MMW_BEST_EFFORT);
+        px += dx;
+        py += dy;
+
+        if (sendClock.getElapsedTime().asMilliseconds() > 50) {
+            if (dx != 0 || dy != 0) {
+                InputMsg in{g_myId, dx, dy};
+                mmw_publish_raw("input", &in, sizeof(InputMsg), MMW_RELIABLE);
+            }
+            sendClock.restart();
         }
 
         window.clear();
         {
-            std::lock_guard<std::mutex> lock(playersMutex);
-            for (auto& kv : players) {
-                window.draw(kv.second);
+            std::lock_guard<std::mutex> lk(g_state_mtx);
+            std::cout << "Size of g_players: " << g_players.size() << std::endl;
+            for (auto& kv : g_players) {
+                if (kv.first != g_myId) {
+                    sf::RectangleShape r(sf::Vector2f(32,32));
+                    r.setPosition(kv.second.x, kv.second.y);
+                    r.setFillColor(sf::Color::Red);
+                    window.draw(r);
+                    std::cout << "Other Player current position: (" << std::to_string(kv.second.x) << ", " << std::to_string(kv.second.y) << ")" << std::endl;
+                }
             }
         }
-        window.display();
+        me.setPosition(px, py);
+        window.draw(me);
+        std::cout << "My current position: (" << std::to_string(px) << ", " << std::to_string(py) << ")" << std::endl;
 
-        sf::sleep(sf::milliseconds(16)); // ~60 FPS
+        window.display();
     }
 
     mmw_cleanup();
