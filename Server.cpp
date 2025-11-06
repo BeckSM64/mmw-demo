@@ -32,7 +32,9 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
         std::lock_guard<std::mutex> lk(g_state_mtx);
         for (auto& kv : g_players) {
-            mmw_publish_raw("state", &kv.second, sizeof(PlayerState), MMW_BEST_EFFORT);
+            if (sizeof(PlayerState) > 0) {
+                mmw_publish_raw("state", &kv.second, sizeof(PlayerState), MMW_BEST_EFFORT);
+            }
         }
     }
 
