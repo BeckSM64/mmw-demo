@@ -1,4 +1,3 @@
-// client.cpp
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <thread>
@@ -31,8 +30,7 @@ void state_callback(void* data) {
 }
 
 int main(int argc, char** argv) {
-    // if (argc >= 2) g_myId = atoi(argv[1]);
-    g_myId = atoi(argv[1]);
+    if (argc >= 2) g_myId = atoi(argv[1]);
     std::cout << "My ID: " << g_myId << std::endl;
 
     mmw_set_log_level(MMW_LOG_LEVEL_OFF);
@@ -43,28 +41,24 @@ int main(int argc, char** argv) {
     sf::RenderWindow window(sf::VideoMode(600,400), "MMW Client");
     window.setFramerateLimit(60);
 
-    float px = 100, py = 100;
-    sf::RectangleShape me(sf::Vector2f(32,32));
-    me.setFillColor(sf::Color::Green);
-
     sf::Clock sendClock;
     while (window.isOpen()) {
         sf::Event e;
+        float dx = 0, dy = 0;
+
         while (window.pollEvent(e)) {
             if (e.type == sf::Event::Closed) window.close();
         }
 
-        float dx=0, dy=0;
+        // Only read input if window is focused
         if (window.hasFocus()) {
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) dx-=2;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) dx+=2;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) dy-=2;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) dy+=2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) dx -= 2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) dx += 2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) dy -= 2;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) dy += 2;
         }
 
-        px += dx;
-        py += dy;
-
+        // Send input to server at 20Hz
         if (sendClock.getElapsedTime().asMilliseconds() > 50) {
             if (dx != 0 || dy != 0) {
                 InputMsg in{g_myId, dx, dy};
@@ -73,24 +67,17 @@ int main(int argc, char** argv) {
             sendClock.restart();
         }
 
+        // Render all players using server-authoritative state
         window.clear();
         {
             std::lock_guard<std::mutex> lk(g_state_mtx);
-            std::cout << "Size of g_players: " << g_players.size() << std::endl;
             for (auto& kv : g_players) {
-                if (kv.first != g_myId) {
-                    sf::RectangleShape r(sf::Vector2f(32,32));
-                    r.setPosition(kv.second.x, kv.second.y);
-                    r.setFillColor(sf::Color::Red);
-                    window.draw(r);
-                    std::cout << "Other Player current position: (" << std::to_string(kv.second.x) << ", " << std::to_string(kv.second.y) << ")" << std::endl;
-                }
+                sf::RectangleShape r(sf::Vector2f(32,32));
+                r.setPosition(kv.second.x, kv.second.y);
+                r.setFillColor(kv.first == g_myId ? sf::Color::Green : sf::Color::Red);
+                window.draw(r);
             }
         }
-        me.setPosition(px, py);
-        window.draw(me);
-        std::cout << "My current position: (" << std::to_string(px) << ", " << std::to_string(py) << ")" << std::endl;
-
         window.display();
     }
 
