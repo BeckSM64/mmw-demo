@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
+# Force static libraries for all subprojects
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
+
 # Fetch your middleware from Git
 FetchContent_Declare(
   mmw
@@ -15,6 +18,8 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(mmw)
 set(BUILD_BROKER ON CACHE BOOL "Build broker executable")
 
+set(SFML_BUILD_SHARED_LIBS OFF CACHE BOOL "Build SFML as static" FORCE)
+
 # Fetch SFML
 FetchContent_Declare(
     SFML
@@ -22,10 +27,6 @@ FetchContent_Declare(
     GIT_TAG 2.5.1 # or latest stable tag
 )
 FetchContent_MakeAvailable(SFML)
-
-# Link SFML to your target
-# Example: target_link_libraries(my_app PRIVATE sfml-graphics sfml-window sfml-system)
-
 
 # Create chat executable
 # add_executable(chat main.cpp)
