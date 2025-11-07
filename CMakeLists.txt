@@ -9,8 +9,8 @@ include(FetchContent)
 # Fetch your middleware from Git
 FetchContent_Declare(
   mmw
-  GIT_REPOSITORY git@github.com:BeckSM64/Minimal-Middleware.git   # replace with actual repo URL
-  GIT_TAG main                                           # or a specific commit/tag
+  GIT_REPOSITORY git@github.com:BeckSM64/Minimal-Middleware.git
+  GIT_TAG v1.0.1
 )
 FetchContent_MakeAvailable(mmw)
 set(BUILD_BROKER ON CACHE BOOL "Build broker executable")
