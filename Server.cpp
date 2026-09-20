@@ -11,30 +11,48 @@ struct PlayerState {
     float y;
 };
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+void sleep_ms(unsigned ms)
+{
+#ifdef __EMSCRIPTEN__
+    emscripten_sleep(ms);
+#else
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+#endif
+}
+
 static std::mutex g_state_mtx;
 static std::unordered_map<uint32_t, PlayerState> g_players;
 
 // Subscriber callback: receives the client's current position
-void position_callback(void* data) {
+void position_callback(const char* topic, void* data) {
     PlayerState* s = reinterpret_cast<PlayerState*>(data);
     std::lock_guard<std::mutex> lk(g_state_mtx);
     g_players[s->playerId] = *s;
 }
 
 int main() {
-    mmw_initialize("127.0.0.1", 5000);
+    mmw_initialize("127.0.0.1", 20666, MMW_TRANSPORT_WEBSOCKET);
 
     mmw_create_subscriber_raw("input", position_callback);
     mmw_create_publisher("state");
 
     // Server loop: broadcast all player positions at ~60Hz
     while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        sleep_ms(16);
+
         std::lock_guard<std::mutex> lk(g_state_mtx);
+
         for (auto& kv : g_players) {
-            if (sizeof(PlayerState) > 0) {
-                mmw_publish_raw("state", &kv.second, sizeof(PlayerState), MMW_BEST_EFFORT);
-            }
+            mmw_publish_raw(
+                "state",
+                &kv.second,
+                sizeof(PlayerState),
+                MMW_RELIABLE
+            );
         }
     }
 

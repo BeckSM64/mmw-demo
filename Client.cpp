@@ -1,7 +1,6 @@
 // Client.cpp
 #include <SFML/Graphics.hpp>
 #include <iostream>
-#include <thread>
 #include <mutex>
 #include <unordered_map>
 #include "MMW.h"
@@ -45,7 +44,7 @@ class NetworkManager {
 public:
     NetworkManager(uint32_t myId) : myId(myId) {
         mmw_set_log_level(MMW_LOG_LEVEL_OFF);
-        mmw_initialize("127.0.0.1", 5000);
+        mmw_initialize("127.0.0.1", 20666, MMW_TRANSPORT_WEBSOCKET);
         mmw_create_publisher("input");
         mmw_create_subscriber_raw("state", NetworkManager::stateCallbackStatic);
         instance = this;
@@ -55,7 +54,7 @@ public:
 
     void sendPosition(const PlayerState& state) {
         // Only send if moved
-        mmw_publish_raw("input", (void*)&state, sizeof(PlayerState), MMW_BEST_EFFORT);
+        mmw_publish_raw("input", (void*)&state, sizeof(PlayerState), MMW_RELIABLE);
     }
 
     Player* getPlayer(uint32_t id) {
@@ -76,12 +75,12 @@ public:
 private:
     static NetworkManager* instance;
 
-    static void stateCallbackStatic(void* data) {
+    static void stateCallbackStatic(const char* topic, void* data) {
         if (!instance) return;
-        instance->stateCallback(data);
+        instance->stateCallback(topic, data);
     }
 
-    void stateCallback(void* data) {
+    void stateCallback(const char* topic, void* data) {
         PlayerState* s = reinterpret_cast<PlayerState*>(data);
         if (s->playerId == myId) return;
 
@@ -120,7 +119,7 @@ void resizeView(sf::RenderWindow& window, sf::View& view) {
         posY = (1.f - sizeY) / 2.f;
     }
 
-    view.setViewport(sf::FloatRect(posX, posY, sizeX, sizeY));
+    view.setViewport(sf::FloatRect({posX, posY}, {sizeX, sizeY}));
 }
 
 // ---------------------------
@@ -133,8 +132,8 @@ int main(int argc, char** argv) {
 
     NetworkManager network(myId);
 
-    sf::RenderWindow window(sf::VideoMode(1280, 720), "MMW Client", sf::Style::Default);
-    sf::View view(sf::FloatRect(0, 0, 1920, 1080));
+    sf::RenderWindow window(sf::VideoMode({1280, 720}), "MMW Client", sf::Style::Default);
+    sf::View view(sf::FloatRect({0, 0}, {1920, 1080}));
     window.setView(view);
 
     Player me(myId, 100.f, 100.f, true);
@@ -144,13 +143,12 @@ int main(int argc, char** argv) {
     sf::Clock deltaClock;
 
     while (window.isOpen()) {
-        sf::Event e;
-        float dx = 0, dy = 0;
+        float dx = 0.f, dy = 0.f;
 
-        while (window.pollEvent(e)) {
-            if (e.type == sf::Event::Closed)
+        while (const auto event = window.pollEvent()) {
+            if (event->is<sf::Event::Closed>())
                 window.close();
-            else if (e.type == sf::Event::Resized)
+            else if (event->is<sf::Event::Resized>())
                 resizeView(window, view);
         }
 
@@ -158,17 +156,22 @@ int main(int argc, char** argv) {
 
         // Apply input locally
         if (window.hasFocus()) {
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) dx -= 200.f * dt;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) dx += 200.f * dt;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) dy -= 200.f * dt;
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) dy += 200.f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
+                dx -= 200.f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D))
+                dx += 200.f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
+                dy -= 200.f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S))
+                dy += 200.f * dt;
         }
 
         me.current.x += dx;
         me.current.y += dy;
 
         // Send own updated position only if moved
-        if ((dx != 0.f || dy != 0.f) && sendClock.getElapsedTime().asMilliseconds() > 16) {
+        if ((dx != 0.f || dy != 0.f) &&
+            sendClock.getElapsedTime().asMilliseconds() > 16) {
             network.sendPosition(me.getState());
             sendClock.restart();
         }
@@ -179,7 +182,8 @@ int main(int argc, char** argv) {
             for (auto& kv : network.players) {
                 Player* rp = kv.second;
                 rp->alpha += dt * 10.f;
-                if (rp->alpha > 1.f) rp->alpha = 1.f;
+                if (rp->alpha > 1.f)
+                    rp->alpha = 1.f;
             }
         }
 
@@ -189,7 +193,7 @@ int main(int argc, char** argv) {
 
         sf::RectangleShape background(sf::Vector2f(1920.f, 1080.f));
         background.setFillColor(sf::Color(0, 100, 200));
-        background.setPosition(0.f, 0.f);
+        background.setPosition({0.f, 0.f});
         window.draw(background);
 
         // Remote players
@@ -197,13 +201,16 @@ int main(int argc, char** argv) {
             std::lock_guard<std::mutex> lk(network.mtx);
             for (auto& kv : network.players) {
                 Player* rp = kv.second;
-                if (rp->local) continue;
+                if (rp->local)
+                    continue;
+
                 float ix = lerp(rp->previous.x, rp->current.x, rp->alpha);
                 float iy = lerp(rp->previous.y, rp->current.y, rp->alpha);
+
                 sf::RectangleShape r(sf::Vector2f(playerSize, playerSize));
                 r.setFillColor(sf::Color::Red);
-                r.setOrigin(playerSize/2, playerSize/2);
-                r.setPosition(ix, iy);
+                r.setOrigin({playerSize / 2.f, playerSize / 2.f});
+                r.setPosition({ix, iy});
                 window.draw(r);
             }
         }
@@ -211,8 +218,8 @@ int main(int argc, char** argv) {
         // Draw own player
         sf::RectangleShape playerBox(sf::Vector2f(playerSize, playerSize));
         playerBox.setFillColor(sf::Color::Green);
-        playerBox.setOrigin(playerSize/2, playerSize/2);
-        playerBox.setPosition(me.current.x, me.current.y);
+        playerBox.setOrigin({playerSize / 2.f, playerSize / 2.f});
+        playerBox.setPosition({me.current.x, me.current.y});
         window.draw(playerBox);
 
         window.display();
