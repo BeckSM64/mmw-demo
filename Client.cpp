@@ -45,7 +45,7 @@ class NetworkManager {
 public:
     NetworkManager(uint32_t myId) : myId(myId) {
         mmw_set_log_level(MMW_LOG_LEVEL_OFF);
-        mmw_initialize("127.0.0.1", 5000);
+        mmw_initialize("127.0.0.1", 5001, MMW_TRANSPORT_WEBSOCKET);
         mmw_create_publisher("input");
         mmw_create_subscriber_raw("state", NetworkManager::stateCallbackStatic);
         instance = this;
@@ -76,12 +76,12 @@ public:
 private:
     static NetworkManager* instance;
 
-    static void stateCallbackStatic(void* data) {
+    static void stateCallbackStatic(const char* topic, void* data) {
         if (!instance) return;
-        instance->stateCallback(data);
+        instance->stateCallback(topic, data);
     }
 
-    void stateCallback(void* data) {
+    void stateCallback(const char* topic, void* data) {
         PlayerState* s = reinterpret_cast<PlayerState*>(data);
         if (s->playerId == myId) return;
 

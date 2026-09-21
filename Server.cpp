@@ -15,14 +15,14 @@ static std::mutex g_state_mtx;
 static std::unordered_map<uint32_t, PlayerState> g_players;
 
 // Subscriber callback: receives the client's current position
-void position_callback(void* data) {
+void position_callback(const char* topic, void* data) {
     PlayerState* s = reinterpret_cast<PlayerState*>(data);
     std::lock_guard<std::mutex> lk(g_state_mtx);
     g_players[s->playerId] = *s;
 }
 
 int main() {
-    mmw_initialize("127.0.0.1", 5000);
+    mmw_initialize("127.0.0.1", 5001, MMW_TRANSPORT_WEBSOCKET);
 
     mmw_create_subscriber_raw("input", position_callback);
     mmw_create_publisher("state");

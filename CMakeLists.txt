@@ -13,7 +13,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
 FetchContent_Declare(
   mmw
   GIT_REPOSITORY git@github.com:BeckSM64/Minimal-Middleware.git
-  GIT_TAG v1.0.1
+  GIT_TAG abstract-transport
 )
 FetchContent_MakeAvailable(mmw)
 set(BUILD_BROKER ON CACHE BOOL "Build broker executable")
