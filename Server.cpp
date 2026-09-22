@@ -35,7 +35,7 @@ void position_callback(const char* topic, void* data) {
 }
 
 int main() {
-    mmw_initialize("127.0.0.1", 20666, MMW_TRANSPORT_WEBSOCKET);
+    mmw_initialize("127.0.0.1", 5001, MMW_TRANSPORT_WEBSOCKET);
 
     mmw_create_subscriber_raw("input", position_callback);
     mmw_create_publisher("state");
